@@ -33,7 +33,7 @@ app.post("/categories", async (req, res) => {
   const nameSchema = Joi.object({
     name: Joi.string().trim().min(1).required(),
   });
-  const nameValidation = nameSchema.validate({ name: name }); //arrumar jeito melhor de representar esse obj
+  const nameValidation = nameSchema.validate({ name: name }); // req.body
   if (nameValidation.error) {
     res.sendStatus(400);
     return;
@@ -74,48 +74,120 @@ app.get("/games", async (req, res) => {
 });
 
 app.post("/games", async (req, res) => {
+  const newGameSchema = Joi.object({
+    name: Joi.string().trim().required(),
+    image: Joi.string().required(),
+    stockTotal: Joi.number().min(1).required(),
+    categoryId: Joi.number().required(),
+    pricePerDay: Joi.number().min(1).required(),
+  });
 
-const newGameSchema = Joi.object({
-	name: Joi.string().trim().required(),
-	image: Joi.string().required(),
-	stockTotal: Joi.number().min(1).required(),
-	categoryId: Joi.number().required(),
-	pricePerDay: Joi.number().min(1).required(),
-});
+  const { name, image, stockTotal, categoryId, pricePerDay } = req.body;
 
-	const { name, image, stockTotal, categoryId, pricePerDay } = req.body;
-
-	try {
-		const existingCategories = await connection.query("SELECT id FROM categories");
-		const existingGames = await connection.query("SELECT name FROM games");
-		const existingCategoriesIds = existingCategories.rows.map((c) => c.id);
-		const existingGamesNames = existingGames.rows.map((g) => g.name);
+  try {
+    const existingCategories = await connection.query(
+      "SELECT id FROM categories"
+    );
+    const existingGames = await connection.query("SELECT name FROM games");
+    const existingCategoriesIds = existingCategories.rows.map((c) => c.id);
+    const existingGamesNames = existingGames.rows.map((g) => g.name);
 
     const newGameValidation = newGameSchema.validate(req.body);
 
+    if (
+      newGameValidation.error ||
+      !existingCategoriesIds.includes(categoryId)
+    ) {
+      res.sendStatus(400);
+      return;
+    }
 
-		if (newGameValidation.error || !existingCategoriesIds.includes(categoryId)) {
-			res.sendStatus(400);
-			return;
-		}
+    if (existingGamesNames.includes(name)) {
+      res.sendStatus(409);
+      return;
+    }
 
-		if (existingGamesNames.includes(name)) {
-			res.sendStatus(409);
-			return;
-		}
-
-		connection.query(`INSERT INTO games (name, image, "stockTotal", "categoryId", "pricePerDay") values ($1, $2, $3, $4, $5)`, [
-			name,
-			image,
-			stockTotal,
-			categoryId,
-			pricePerDay,
-		]);
-		res.sendStatus(201);
-	} catch(err) {
+    connection.query(
+      `INSERT INTO games (name, image, "stockTotal", "categoryId", "pricePerDay") values ($1, $2, $3, $4, $5)`,
+      [name, image, stockTotal, categoryId, pricePerDay]
+    );
+    res.sendStatus(201);
+  } catch (err) {
     console.log(err);
-		res.sendStatus(500);
-	}
+    res.sendStatus(500);
+  }
+});
+
+app.get("/customers", async (req, res) => {
+  try {
+    let customers = [];
+    const initialLetters = req.query.cpf || "";
+    customers = await connection.query(
+      `SELECT * FROM customers WHERE name ILIKE $1`,
+      [initialLetters + "%"]
+    );
+    if (customers.rowCount === 0) {
+      res.sendStatus(404);
+      return;
+    }
+    res.send(customers.rows);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+app.get("/customers/:id", async (req, res) => {
+  const customer = await connection.query(
+    "SELECT * FROM customers WHERE id=$1",
+    [req.params.id]
+  );
+  if (customer.rowCount === 0) {
+    res.sendStatus(404);
+    return;
+  }
+  res.send(customer.rows);
+});
+
+app.post("/customers", async (req, res) => {
+  const registeredCpfs = await connection.query("SELECT cpf FROM customers");
+  const registeredCpfsValues = registeredCpfs.rows.map((c) => c.cpf);
+
+  const { name, phone, cpf, birthday } = req.body;
+
+  const customerSchema = Joi.object({
+    name: Joi.string().trim().min(1).required(),
+    phone: Joi.string()
+      .required()
+      .pattern(/[0-9]{10,11}/),
+    cpf: Joi.string()
+      .required()
+      .pattern(/[0-9]{11}/),
+    birthday: Joi.string()
+      .required()
+      .pattern(/^[0-9]{4}\-[0-9]{2}\-[0-9]{2}$/),
+  });
+
+  const customerValidation = customerSchema.validate(req.body);
+  try {
+    if (customerValidation.error) {
+      res.sendStatus(400);
+      return;
+    }
+
+    if (registeredCpfsValues.includes(cpf)) {
+      res.sendStatus(409);
+      return;
+    }
+    connection.query(
+      "INSERT INTO customers (name, phone, cpf, birthday) values ($1,$2,$3,$4)",
+      [name, phone, cpf, birthday]
+    );
+    res.sendStatus(200);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
 });
 
 app.listen(4000, () => {
