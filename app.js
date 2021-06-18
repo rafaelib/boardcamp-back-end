@@ -273,6 +273,35 @@ app.post("/rentals", async (req, res) => {
     res.sendStatus(500);
   }
 });
+
+app.post("/rentals/:id/return", async (req, res) => {
+	const { id } = req.params;
+
+	try {
+		const rentalQuery = await connection.query(`SELECT * FROM rentals WHERE id=$1`, [id]);
+		//const rental = rentalQuery.rows[0];
+		if (!rentalQuery.rows[0]) {
+			res.sendStatus(404);
+			return;
+		}
+		if (rentalQuery.rows[0].returnDate) {
+			res.sendStatus(400);
+			return;
+		}
+
+		const returnDate = new Date();
+    // diferença de data em ms 
+		const dateDiff = (returnDate.getTime() - rentalQuery.rows[0].rentDate.getTime()) / (86400000);
+		const daysOfDelay = Math.floor(dateDiff);
+
+		const delayFee = daysOfDelay * (rentalQuery.rows[0].originalPrice / rentalQuery.rows[0].daysRented);
+		await connection.query(`UPDATE rentals SET "returnDate"=$1, "delayFee"=$2 WHERE id=$3`, [returnDate, delayFee, id]);
+		res.sendStatus(200);
+	} catch {
+		res.sendStatus(500);
+	}
+});
+
 app.listen(4000, () => {
   console.log("iniciando o servidor");
 });
