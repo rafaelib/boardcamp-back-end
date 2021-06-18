@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import Joi from "joi";
 import pg from "pg";
+import dayjs from "dayjs";
 
 const app = express();
 app.use(cors());
@@ -33,7 +34,7 @@ app.post("/categories", async (req, res) => {
   const nameSchema = Joi.object({
     name: Joi.string().trim().min(1).required(),
   });
-  const nameValidation = nameSchema.validate({ name: name }); // req.body
+  const nameValidation = nameSchema.validate(req.body);
   if (nameValidation.error) {
     res.sendStatus(400);
     return;
@@ -149,24 +150,28 @@ app.get("/customers/:id", async (req, res) => {
   res.send(customer.rows);
 });
 
+////////////// SCHEMA PARA CLIENTES//////////////////////
+
+const customerSchema = Joi.object({
+  name: Joi.string().trim().min(1).required(),
+  phone: Joi.string()
+    .required()
+    .pattern(/[0-9]{10,11}/),
+  cpf: Joi.string()
+    .required()
+    .pattern(/[0-9]{11}/),
+  birthday: Joi.string()
+    .required()
+    .pattern(/^[0-9]{4}\-[0-9]{2}\-[0-9]{2}$/),
+});
+
+////////////// SCHEMA PARA CLIENTES//////////////////////
+
 app.post("/customers", async (req, res) => {
   const registeredCpfs = await connection.query("SELECT cpf FROM customers");
   const registeredCpfsValues = registeredCpfs.rows.map((c) => c.cpf);
 
   const { name, phone, cpf, birthday } = req.body;
-
-  const customerSchema = Joi.object({
-    name: Joi.string().trim().min(1).required(),
-    phone: Joi.string()
-      .required()
-      .pattern(/[0-9]{10,11}/),
-    cpf: Joi.string()
-      .required()
-      .pattern(/[0-9]{11}/),
-    birthday: Joi.string()
-      .required()
-      .pattern(/^[0-9]{4}\-[0-9]{2}\-[0-9]{2}$/),
-  });
 
   const customerValidation = customerSchema.validate(req.body);
   try {
@@ -190,6 +195,84 @@ app.post("/customers", async (req, res) => {
   }
 });
 
+app.put("/customers/:id", async (req, res) => {
+  const { name, phone, cpf, birthday } = req.body;
+  const { id } = req.params;
+  const customerValidation = customerSchema.validate(req.body);
+  const registeredCpfs = await connection.query("SELECT cpf FROM customers");
+  const registeredCpfsValues = registeredCpfs.rows.map((c) => c.cpf);
+
+  try {
+    if (customerValidation.error) {
+      res.sendStatus(400);
+      return;
+    }
+
+    if (registeredCpfsValues.includes(cpf)) {
+      res.sendStatus(409);
+      return;
+    }
+    await connection.query(
+      "UPDATE customers SET name=$1,phone=$2,cpf=$3,birthday=$4 WHERE id=$5",
+      [name, phone, cpf, birthday, id]
+    );
+    res.sendStatus(200);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+app.post("/rentals", async (req, res) => {
+  const { customerId, gameId, daysRented } = req.body;
+  const rentedGames = await connection.query(
+    `SELECT * FROM rentals WHERE "gameId"=$1`,
+    [gameId]
+  );
+  const availableGames = await connection.query(
+    `SELECT "stockTotal" FROM games WHERE id=$1`,
+    [gameId]
+  );
+
+  let pricePerDay = await connection.query(`SELECT "pricePerDay" FROM games WHERE id=$1`, [gameId]);
+
+  let originalPrice = daysRented * pricePerDay.rows[0].pricePerDay;
+
+  const rentDate = new Date();
+
+  let isGameRegistered = await connection.query(
+    "SELECT * FROM games WHERE id=$1",
+    [gameId]
+  );
+  let isCustomerRegistered = await connection.query(
+    "SELECT * FROM customers WHERE id=$1",
+    [customerId]
+  );
+
+  try {
+    //console.log(availableGames.rows)
+    //console.log(availableGames.rows[0].stockTotal)
+
+    if (
+      isGameRegistered.rows.length < 1 ||
+      isCustomerRegistered.rows.length < 1 ||
+      daysRented < 1 ||
+      rentedGames.rows.length >= (availableGames.rows[0].stockTotal || 0)
+    ) {
+      res.sendStatus(400);
+      return;
+    }
+
+    await connection.query(
+			`INSERT INTO rentals ("customerId","gameId","daysRented","rentDate","originalPrice","returnDate","delayFee") values ($1,$2,$3,$4,$5,$6,$7)`,
+			[customerId, gameId, daysRented, rentDate, originalPrice, null, null]
+		);
+		res.sendStatus(201);
+  } catch(err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
 app.listen(4000, () => {
   console.log("iniciando o servidor");
 });
